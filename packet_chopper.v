@@ -47,14 +47,12 @@ module packet_chopper #(
     );
 
 
-wire [DAT_WIDTH-1:0]				fifo0_data_out;
-wire [DAT_WIDTH-1:0]				fifo1_data_out;
+wire [DATA_WIDTH-1:0]				fifo_data_out;
 
 assign Error = InBus_Error;
 
 receive_packet #(
-	.DATA_WIDTH (DATA_WIDTH),
-	.DAT_WIDTH	(DAT_WIDTH)
+	.DATA_WIDTH (DATA_WIDTH)
 )recv_packet_inst(
 	.Rst		(Rst),
 	.Clk		(Clk),
@@ -67,14 +65,10 @@ receive_packet #(
 	.InBus_Dat	(InBus_Dat),
 	.InBus_Error(InBus_Error),
 	//fifo interface
-	.fifo0_empty	(fifo0_empty	),
-	.fifo0_rd		(fifo0_rd		),
-	.fifo0_busy		(fifo0_busy		),
-	.fifo0_data_out	(fifo0_data_out	),
-	.fifo1_empty	(fifo1_empty	),
-	.fifo1_rd		(fifo1_rd		),
-	.fifo1_busy		(fifo1_busy		),
-	.fifo1_data_out	(fifo1_data_out	)
+	.fifo_empty		(fifo_empty	),
+	.fifo_rd		(fifo_rd		),
+	.fifo_busy		(fifo_busy		),
+	.fifo_data_out	(fifo_data_out	)
 );
 
 out_packet #(
@@ -84,14 +78,10 @@ out_packet #(
 	.Rst		(Rst),
 	.Clk		(Clk),
 	//fifo interface
-	.fifo0_empty	(fifo0_empty	),
-	.fifo0_rd		(fifo0_rd		),
-	.fifo0_busy		(fifo0_busy		),
-	.fifo0_data_out	(fifo0_data_out	),
-	.fifo1_empty	(fifo1_empty	),
-	.fifo1_rd		(fifo1_rd		),
-	.fifo1_busy		(fifo1_busy		),
-	.fifo1_data_out	(fifo1_data_out	),
+	.fifo_empty		(fifo_empty	),
+	.fifo_rd		(fifo_rd		),
+	.fifo_busy		(fifo_busy		),
+	.fifo_data_out	(fifo_data_out	),
 	//OutBus
 	.OutBus_Val		(OutBus_Val		), 
 	.OutBus_Sop		(OutBus_Sop		), 

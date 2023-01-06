@@ -26,14 +26,10 @@ module out_packet #(
     input 								Rst,  //Reset signal used by the block
     input 								Clk,  //Clock signal used by the block
 	//fifo interface
-	input								fifo0_empty,
-	output	reg							fifo0_rd,
-	input 								fifo0_busy,
-	input [DAT_WIDTH-1:0]				fifo0_data_out,
-	input								fifo1_empty,
-	output	reg							fifo1_rd,
-	input 								fifo1_busy,
-	input [DAT_WIDTH-1:0]				fifo1_data_out,
+	input								fifo_empty,
+	output	reg							fifo_rd,
+	input 								fifo_busy,
+	input [DAT_WIDTH-1:0]				fifo_data_out,
 	 
 	//Output Bus
     output reg							OutBus_Val,  //Data Valid output
@@ -46,26 +42,44 @@ module out_packet #(
     output reg 							OutBus_Error	//Error Signal
     );
 
+parameter 	DATA_BYTE_WIDTH 	= DATA_WIDTH/8;
+parameter 	DAT_BYTE_WIDTH 		= DAT_WIDTH/8;
+//out_bus is narrow than in_bus
+parameter 	NARROW = DATA_WIDTH > DAT_WIDTH;
+// required number of cycles in out_bus
+parameter 	CYCLE_COUNT = NARROW ? (DATA_WIDTH / DAT_WIDTH) : (DAT_WIDTH / DATA_WIDTH);
+
+
 //State machine states_sm0
 localparam IDLE_SM0             = 4'h0;
-localparam FIFO0_LOAD_SM0      	= 4'h1;
-localparam FIFO0_START_SM0      = 4'h2; 
-localparam FIFO0_SEND_SM0   	= 4'h3; 
-localparam FIFO1_LOAD_SM0      	= 4'h4;
-localparam FIFO1_START_SM0      = 4'h5;
-localparam FIFO1_SEND_SM0   	= 4'h6; 
+localparam FIFO_LOAD0_SM0      	= 4'h1;
+localparam FIFO_LOAD1_SM0      	= 4'h2;
+localparam FIFO_LOAD2_SM0      	= 4'h3;
+localparam FIFO_LOAD3_SM0      	= 4'h4;
+localparam SUB_START_SM0      	= 4'h5; 
+localparam SUB_SEND_SM0   		= 4'h6; 
+
 reg [3:0]             			state_0;
 
-reg [15:0]				remain_length;
+reg [15:0]				total_length;
+reg [15:0]				sub_length;
+reg [7:	0]				sub_type;
+reg [3: 0] 				byte_counter;
+reg [DATA_WIDTH -1:0]	fifo_data_reg;
+reg [DATA_WIDTH -1:0]	OutBus_Dat_reg;
+reg [3:0]				bytes_shift;
 
 always@(posedge Clk)
 begin
     if(Rst)
 	begin
 		state_0   		<= IDLE_SM0;
-		fifo0_rd		<= 1'b0;
-		fifo1_rd		<= 1'b0;
-		remain_length	<= 16'b0;
+		fifo_rd			<= 1'b0;
+		total_length	<= 16'b0;
+		sub_length		<= 16'b0;
+		sub_type		<= 8'b0;
+		fifo_data_reg	<= 0;
+		OutBus_Dat_reg	<= 0;
 		OutBus_Val		<= 1'b0;
 		OutBus_Sop		<= 1'b0;
 		OutBus_Eop		<= 1'b0;
@@ -73,15 +87,20 @@ begin
 		OutBus_PktType	<= 8'b0;
 		OutBus_Dat		<= 0;
 		OutBus_Mod		<= 0;
+		byte_counter	<= 4'b0;
+		bytes_shift		<= 0;
 	end
     else 
 	begin
 		case(state_0)
 		IDLE_SM0 :
 		begin
-			fifo0_rd		<= 1'b0;
-			fifo1_rd		<= 1'b0;
-			remain_length	<= 16'b0;
+			fifo_rd			<= 1'b0;
+			total_length	<= 16'b0;
+			sub_length		<= 16'b0;
+			sub_type		<= 8'b0;
+			fifo_data_reg	<= 0;
+			OutBus_Dat_reg	<= 0;
 			OutBus_Val		<= 1'b0;
 			OutBus_Sop		<= 1'b0;
 			OutBus_Eop		<= 1'b0;
@@ -89,157 +108,116 @@ begin
 			OutBus_PktType	<= 8'b0;
 			OutBus_Dat		<= 0;
 			OutBus_Mod		<= 0;
-			if (~(fifo0_empty | fifo0_busy))
+			byte_counter	<= 4'b0;
+			bytes_shift		<= 0;
+			if (~(fifo_empty))
 			begin
-				state_0 		<= FIFO0_LOAD_SM0;
-				fifo0_rd		<= 1'b1;
-			end
-			else if (~(fifo1_empty | fifo1_busy))
-			begin
-				state_0 		<= FIFO1_LOAD_SM0;
-				fifo1_rd		<= 1'b1;
+				state_0 	<= FIFO_LOAD0_SM0;
+				fifo_rd		<= 1'b1;
 			end
 		end
-		FIFO0_LOAD_SM0:
+		FIFO_LOAD0_SM0:
 		begin
-			state_0 		<= FIFO0_START_SM0;
+			state_0 	<= FIFO_LOAD1_SM0;
 		end
-		FIFO0_START_SM0:
+		FIFO_LOAD1_SM0:
 		begin
-			OutBus_Dat		<= fifo0_data_out;
-			if(fifo0_data_out[DAT_WIDTH-1:DAT_WIDTH-16] > DAT_WIDTH/8)
+			//if in_bus is wider than 2 bytes, we can get all the larger packet information
+			if (DATA_BYTE_WIDTH > 3)
 			begin
-				fifo0_rd		<= 1'b1;
-				remain_length	<= fifo0_data_out[DAT_WIDTH-1:DAT_WIDTH-16]- DAT_WIDTH/8;
+				total_length	<= fifo_data_out[DATA_WIDTH-1:DATA_WIDTH-16];  
+				state_0 		<= FIFO_LOAD3_SM0;
+				fifo_data_reg	<= fifo_data_out;
+				fifo_rd			<= 1'b1;
+				bytes_shift		<= 4'h3;
+			end	
+			//if in_bus is 2 bytes width, we can get length information the larger packet information
+			else if (DATA_BYTE_WIDTH == 2)
+			begin
+				total_length	<= fifo_data_out[DATA_WIDTH-1:DATA_WIDTH-16];  //assume the in_bus is wider than 16 bits
+				state_0 		<= FIFO_LOAD2_SM0;
+				fifo_rd			<= 1'b1;
+			end
+		end
+		FIFO_LOAD2_SM0:
+		begin
+			fifo_data_reg	<= fifo_data_out;
+			state_0 		<= FIFO_LOAD3_SM0;
+			fifo_rd			<= 1'b1;
+			total_length	<= total_length - DATA_BYTE_WIDTH;
+		end
+		FIFO_LOAD3_SM0:
+		begin
+			if (DATA_BYTE_WIDTH > 3)
+			begin
+				OutBus_Dat_reg 	<= {fifo_data_reg[DATA_WIDTH-((bytes_shift)<<3)-1:0], fifo_data_out[DATA_WIDTH-1:DATA_WIDTH-((bytes_shift)<<3)]};	
+				fifo_data_reg	<= fifo_data_out;
+				state_0 		<= SUB_START_SM0;
+			end
+		end
+		SUB_START_SM0:
+		begin
+			//if in_bus is wider than 2 bytes, we can get all the larger packet information
+			if ((DATA_BYTE_WIDTH > 3) &&(OutBus_Dat_reg[DAT_WIDTH-1:DAT_WIDTH-16] > DAT_WIDTH/8))
+			begin
 				OutBus_Val		<= 1'b1;
 				OutBus_Sop		<= 1'b1;
 				OutBus_Eop		<= 1'b0;
-				OutBus_PktType	<= fifo0_data_out[DAT_WIDTH-17:DAT_WIDTH-24];
-				OutBus_PktLen	<= fifo0_data_out[DAT_WIDTH-1:DAT_WIDTH-16];
+				OutBus_Mod		<= DAT_BYTE_WIDTH;
+				state_0   		<= FIFO_SEND_SM0;
+				byte_counter	<= CYCLE_COUNT;	
+				total_length	<= total_length - DATA_BYTE_WIDTH;
+				bytes_shift		<= (bytes_shift + OutBus_Dat_reg[DAT_WIDTH-1:DAT_WIDTH-16]) % DAT_BYTE_WIDTH;
+				OutBus_Dat		<= ({DATA_WIDTH{1'b1}} << ((DATA_BYTE_WIDTH - OutBus_Dat_reg[DAT_WIDTH-1:DAT_WIDTH-16])<<3)) & OutBus_Dat_reg;
+				sub_length		<= OutBus_Dat_reg[DAT_WIDTH-1:DAT_WIDTH-16];
+			end
+			else if (DATA_BYTE_WIDTH > 3)
+			begin
+				OutBus_Val		<= 1'b1;
+				OutBus_Sop		<= 1'b1;
+				OutBus_Eop		<= 1'b1;
 				OutBus_Mod		<= DAT_WIDTH/8;
-				state_0   		<= FIFO0_SEND_SM0;
-			end
-			else if(!fifo0_empty)
-			begin
-				fifo0_rd		<= 1'b1;
-				OutBus_Val		<= 1'b1;
-				OutBus_Sop		<= 1'b1;
-				OutBus_Eop		<= 1'b1;
-				OutBus_Mod		<= fifo0_data_out[DAT_WIDTH- 1:DAT_WIDTH-16];
-				state_0 		<= FIFO0_START_SM0;
-			end
-			else
-			begin
-				fifo0_rd		<= 1'b0;
-				OutBus_Val		<= 1'b1;
-				OutBus_Sop		<= 1'b1;
-				OutBus_Eop		<= 1'b1;
-				OutBus_Mod		<= fifo0_data_out[DAT_WIDTH-1:DAT_WIDTH-16];
-				state_0   		<= IDLE_SM0;
+				OutBus_Dat		<= ({DATA_WIDTH{1'b1}} << ((DATA_BYTE_WIDTH - InBus_Mod)<<3)) & OutBus_Dat_reg;
+				OutBus_Dat_reg 	<= {fifo_data_reg[DATA_WIDTH-25:0], fifo_data_out[DATA_WIDTH-1:DATA_WIDTH-24]};	
+				fifo_data_reg	<= fifo_data_out;
+				state_0 		<= SUB_START_SM0;
 			end
 		end
-		FIFO0_SEND_SM0:
+		SUB_SEND_SM0:
 		begin
-			OutBus_Dat		<= fifo0_data_out;
-			if(remain_length > (DAT_WIDTH/8))
+			OutBus_Dat <= {fifo_data_reg[DATA_WIDTH-25:0], fifo_data_out[DATA_WIDTH-1:DATA_WIDTH-24]};
+			fifo_data_reg	<= fifo_data_out;
+			if(sub_length > DAT_BYTE_WIDTH)
 			begin
-				fifo0_rd		<= 1'b1;
-				remain_length	<= remain_length - DAT_WIDTH/8;
-				OutBus_Val		<= 1'b1;
-				OutBus_Sop		<= 1'b0;
-				OutBus_Eop		<= 1'b0;
-				OutBus_Mod		<= DAT_WIDTH/8;
-				state_0   		<= FIFO0_SEND_SM0;
-			end
-			else if(!fifo0_empty)
-			begin
-				fifo0_rd		<= 1'b1;
-				OutBus_Val		<= 1'b1;
-				OutBus_Sop		<= 1'b0;
-				OutBus_Eop		<= 1'b1;
-				OutBus_Mod		<= remain_length;
-				state_0 		<= FIFO0_START_SM0;
-			end
-			else
-			begin
-				fifo0_rd		<= 1'b0;
-				OutBus_Val		<= 1'b1;
-				OutBus_Sop		<= 1'b0;
-				OutBus_Eop		<= 1'b1;
-				OutBus_Mod		<= remain_length;
-				state_0   		<= IDLE_SM0;
-			end
-		end
-		FIFO1_LOAD_SM0:
-		begin
-			state_0 		<= FIFO1_START_SM0;
-		end
-		FIFO1_START_SM0:
-		begin
-			OutBus_Dat		<= fifo1_data_out;
-			if(fifo1_data_out[DAT_WIDTH-1:DAT_WIDTH-16] > DAT_WIDTH/8)
-			begin
-				fifo1_rd		<= 1'b1;
-				remain_length	<= fifo1_data_out[DAT_WIDTH-1:DAT_WIDTH-16] - DAT_WIDTH/8;
-				OutBus_Val		<= 1'b1;
-				OutBus_Sop		<= 1'b1;
-				OutBus_Eop		<= 1'b0;
-				OutBus_PktType	<= fifo1_data_out[DAT_WIDTH-17:DAT_WIDTH-24];
-				OutBus_PktLen	<= fifo1_data_out[DAT_WIDTH-1:DAT_WIDTH-16];
-				OutBus_Mod		<= DAT_WIDTH/8;
-				state_0   		<= FIFO1_SEND_SM0;
-			end
-			else if(!fifo1_empty)
-			begin
-				fifo1_rd		<= 1'b1;
-				OutBus_Val		<= 1'b1;
-				OutBus_Sop		<= 1'b1;
-				OutBus_Eop		<= 1'b1;
-				OutBus_Mod		<= fifo1_data_out[DAT_WIDTH- 1:DAT_WIDTH-16];
-				state_0 		<= FIFO1_START_SM0;
-			end
-			else
-			begin
-				fifo1_rd		<= 1'b0;
-				OutBus_Val		<= 1'b1;
-				OutBus_Sop		<= 1'b1;
-				OutBus_Eop		<= 1'b1;
-				OutBus_Mod		<= fifo1_data_out[DAT_WIDTH-1:DAT_WIDTH-16];
-				state_0   		<= IDLE_SM0;
-			end
-		end
-		FIFO1_SEND_SM0:
-		begin
-			OutBus_Dat		<= fifo1_data_out;
-			if(remain_length > DAT_WIDTH/8)
-			begin
-				fifo1_rd		<= 1'b1;
-				remain_length	<= remain_length - DAT_WIDTH/8;
+				fifo_rd		<= 1'b1;
+				total_length	<= total_length - DATA_BYTE_WIDTH;
+				sub_length		<= sub_length - DATA_BYTE_WIDTH;
 				OutBus_Val		<= 1'b1;
 				OutBus_Sop		<= 1'b0;
 				OutBus_Eop		<= 1'b0;
 				OutBus_Mod		<= DAT_WIDTH/8;
-				state_0   		<= FIFO1_SEND_SM0;
+				state_0   		<= FIFO_SEND_SM0;
 			end
-			else if(!fifo1_empty)
+			else if(!fifo_empty)
 			begin
-				fifo1_rd		<= 1'b1;
+				fifo_rd		<= 1'b1;
 				OutBus_Val		<= 1'b1;
 				OutBus_Sop		<= 1'b0;
 				OutBus_Eop		<= 1'b1;
-				OutBus_Mod		<= remain_length;
-				state_0 		<= FIFO1_START_SM0;
+				OutBus_Mod		<= total_length;
+				state_0 		<= FIFO_START_SM0;
 			end
 			else
 			begin
-				fifo1_rd		<= 1'b0;
+				fifo_rd		<= 1'b0;
 				OutBus_Val		<= 1'b1;
 				OutBus_Sop		<= 1'b0;
 				OutBus_Eop		<= 1'b1;
-				OutBus_Mod		<= remain_length;
+				OutBus_Mod		<= total_length;
 				state_0   		<= IDLE_SM0;
 			end
 		end
+		
 		default:
 			begin
 				state_0   		<= IDLE_SM0;

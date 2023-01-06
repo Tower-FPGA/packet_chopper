@@ -246,7 +246,7 @@ task tsk_send_64bits_packet;
 	 	
 	begin
 		
-		$readmemh("D:/FPGA_Proj/packet_chopper/RTL/tx_64bits_data.txt", tx_data);
+		$readmemh("D:/FPGA_Proj/RTL/packet_chopper/tx_64bits_data.txt", tx_data);
 		$display("[%t] : Send one packet...", $realtime);
 		@(posedge system_clk);
 		i <= i_in;
@@ -302,7 +302,7 @@ task tsk_send_64bits_packet;
 		
 		InBus_Val <= 0;
 		InBus_Sop <= 0;
-		InBus_Eop <= 0;
+		InBus_Eop <= 1;
 		InBus_Mod <= 0;
 		InBus_Dat <= 0;
 
@@ -334,14 +334,19 @@ initial begin
 		//tsk_send_64bits_packet(7,122,0);
 		
 		#100;
-		// sub-packet1: types 'B'( length = 20), plus 3 bytes overhead, use 'z' type of packet to send
-		// sub-packet2: types 'D'( length = 5), plus 3 bytes overhead, use 'z' type of packet to send
-		// sub-packet3: types 'A'( length = 4), plus 3 bytes overhead, use 'z' type of packet to send
-		tsk_send_64bits_packet(36,122,1);
+		// sub-packet1: types 'B'( length = 7), plus 3 bytes overhead, use 'z' type of packet to send
+		// sub-packet2: types 'B'( length = 20), plus 3 bytes overhead, use 'z' type of packet to send
+		// sub-packet3: types 'D'( length = 5), plus 3 bytes overhead, use 'z' type of packet to send
+		// sub-packet4: types 'A'( length = 4), plus 3 bytes overhead, use 'z' type of packet to send
+		tsk_send_64bits_packet(36,122,0);
 		
 		#100;
 		// types 'q'( fix length = 28), plus 3 bytes overhead, use 'z' type of packet to send
-		tsk_send_64bits_packet(28,122,6);
+		tsk_send_64bits_packet(79,122,5);
+		
+		#100;
+		// types 'q'( fix length = 28), plus 3 bytes overhead, use 'z' type of packet to send
+		tsk_send_64bits_packet(79,122,5);
 		
 	end
 	else if(DATA_WIDTH==32) begin 
@@ -357,12 +362,18 @@ initial begin
 				
 		#100;
 		// types 'q'( fix length = 28), plus 3 bytes overhead, use 'z' type of packet to send
-		tsk_send_32bits_packet(28,122,10);
+		// types 'X'( fix length = 51), plus 3 bytes overhead, use 'z' type of packet to send
+		tsk_send_32bits_packet(79,122,10);
+		
+		#100;
+		// types 'q'( fix length = 28), plus 3 bytes overhead, use 'z' type of packet to send
+		// types 'X'( fix length = 51), plus 3 bytes overhead, use 'z' type of packet to send
+		tsk_send_32bits_packet(79,122,10);
 	end
 		
 
 	
-	#10000;
+	#1000;
 	$stop;
 	
 end		
